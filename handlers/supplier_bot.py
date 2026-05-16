@@ -556,6 +556,8 @@ def build_supplier_app():
     cancel_cb = CallbackQueryHandler(cancel_to_menu, pattern=r"^(quote|proforma):cancel$")
 
     onboarding = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CommandHandler("start", start)],
         states={
@@ -570,6 +572,8 @@ def build_supplier_app():
     )
 
     quote_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CallbackQueryHandler(start_quote, pattern=r"^quoterpo:")],
         states={
@@ -604,7 +608,6 @@ def build_supplier_app():
         allow_reentry=True,
     )
 
-    app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("getfile", getfile_cmd))
     app.add_handler(onboarding)
     app.add_handler(quote_conv)

@@ -870,6 +870,8 @@ def build_admin_app():
     app = Application.builder().token(ADMIN_BOT_TOKEN).build()
 
     price_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[
             CallbackQueryHandler(price_action_callback, pattern=r"^adm_price:(edit|add|upload):?"),
@@ -888,6 +890,8 @@ def build_admin_app():
     )
 
     cat_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CallbackQueryHandler(cat_callback, pattern=r"^adm_cat:add")],
         states={ADM_CAT_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, cat_add_text)]},
@@ -896,6 +900,8 @@ def build_admin_app():
     )
 
     bc_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CallbackQueryHandler(bc_target_callback, pattern=r"^adm_bc:")],
         states={ADM_BROADCAST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bc_send)]},
@@ -903,6 +909,8 @@ def build_admin_app():
     )
 
     boq_deliver_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CommandHandler("deliverboq", boq_deliver_start)],
         states={
@@ -923,7 +931,6 @@ def build_admin_app():
     app.add_handler(CommandHandler("start",      start))
     app.add_handler(CommandHandler("rollback",   handle_rollback))
     app.add_handler(CommandHandler("getfile",    getfile_cmd))
-    app.add_handler(CommandHandler("deliverboq", boq_deliver_start))
     app.add_handler(boq_deliver_conv)
     app.add_handler(price_conv)
     app.add_handler(cat_conv)

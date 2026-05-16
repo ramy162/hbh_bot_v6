@@ -735,6 +735,8 @@ def build_buyer_app():
     cancel_cb = CallbackQueryHandler(cancel_to_menu, pattern=r"^(po|boq):cancel$")
 
     onboarding = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CommandHandler("start", start)],
         states={
@@ -748,6 +750,8 @@ def build_buyer_app():
     )
 
     po_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CallbackQueryHandler(po_start, pattern=r"^menu:po$")],
         states={
@@ -789,6 +793,8 @@ def build_buyer_app():
     )
 
     boq_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CallbackQueryHandler(boq_start, pattern=r"^menu:boq$")],
         states={
@@ -811,13 +817,14 @@ def build_buyer_app():
     )
 
     review_conv = ConversationHandler(
+        per_chat=True,
+        per_user=True,
         per_message=False,
         entry_points=[CallbackQueryHandler(review_score_cb, pattern=r"^rev:")],
         states={REV_COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_comment)]},
         fallbacks=[CommandHandler("cancel", cancel_to_menu)],
     )
 
-    app.add_handler(CommandHandler("start",   start))
     app.add_handler(CommandHandler("getfile", getfile_cmd))
     app.add_handler(onboarding)
     app.add_handler(po_conv)
