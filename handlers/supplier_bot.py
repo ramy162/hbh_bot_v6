@@ -414,19 +414,42 @@ async def quote_confirm_handler(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def got_proforma_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Supplier sends a proforma file (Excel/image)."""
+    # Defensive: ensure 'quote' context exists (should be set by entry point)
+    if 'quote' not in context.user_data:
+        logger.warning(f"got_proforma_file: 'quote' context missing for user {update.effective_user.id}")
+        context.user_data['quote'] = {'po_id': None, 'type': 'file'}
+    
     doc = update.message.document or (
         update.message.photo[-1] if update.message.photo else None
     )
     if not doc:
+        logger.debug(f"Q_PROFORMA: No document received from user {update.effective_user.id}")
         await update.message.reply_text(
             "Please send a file or photo, or type /cancel."
         )
         return Q_PROFORMA
 
-    context.user_data['proforma'] = {
-        'file_id':   doc.file_id,
-        'file_name': getattr(doc, 'file_name', 'proforma.jpg'),
-    }
+    try:
+        file_id   = doc.file_id
+        file_name = getattr(doc, 'file_name', 'proforma.jpg')
+        
+        # Validate file attributes
+        if not file_id:
+            logger.error(f"Q_PROFORMA: file_id is empty for user {update.effective_user.id}")
+            await update.message.reply_text("❌ File ID missing. Please try again.")
+            return Q_PROFORMA
+        
+        # Store in context under 'proforma' dict
+        context.user_data['proforma'] = {
+            'file_id':   file_id,
+            'file_name': file_name,
+        }
+        
+        logger.info(f"Q_PROFORMA: Stored file {file_name} (ID: {file_id[:20]}...) for user {update.effective_user.id}")
+    except Exception as e:
+        logger.error(f"Q_PROFORMA: Exception extracting file info: {e}", exc_info=e)
+        await update.message.reply_text("❌ File processing error. Please try again.")
+        return Q_PROFORMA
     await update.message.reply_text(
         f"📎 Got it: *{context.user_data['proforma']['file_name']}*\n\n"
         f"*Add a short note for the buyer?*\n"
@@ -481,7 +504,7 @@ async def proforma_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"_Contact them directly to discuss._\n"
                 f"_via Habesha Build Hub_ 🏗️"
             )
-            await send_file_preview(
+            result = await send_file_preview(
                 bot=buyer_bot,
                 chat_id=buyer['telegram_id'],
                 file_id=pf['file_id'],
@@ -489,9 +512,16 @@ async def proforma_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 caption=caption,
                 parse_mode="Markdown"
             )
-            mark_buyer_notified(quote['quote_id'])
+            
+            if result:
+                logger.info(f"PROFORMA_CONFIRM: Proforma sent successfully to buyer {buyer['telegram_id']}")
+                mark_buyer_notified(quote['quote_id'])
+            else:
+                logger.error(f"PROFORMA_CONFIRM: send_file_preview returned False for buyer {buyer['telegram_id']}")
+    except TelegramError as e:
+        logger.error(f"PROFORMA_CONFIRM: Telegram error sending proforma to buyer: {type(e).__name__} - {e}")
     except Exception as e:
-        logger.warning(f"Proforma delivery to buyer failed: {e}")
+        logger.error(f"PROFORMA_CONFIRM: Unexpected error delivering proforma to buyer: {e}", exc_info=e)
 
     return ConversationHandler.END
 
@@ -616,3 +646,4 @@ def build_supplier_app():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, unknown))
     app.add_error_handler(error_handler)
     return app
+

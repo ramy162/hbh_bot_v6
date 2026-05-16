@@ -260,17 +260,40 @@ async def po_attach_file_prompt(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def po_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Buyer sends a file or photo to attach to the PO."""
+    # Defensive: ensure 'po' context exists
+    if 'po' not in context.user_data:
+        logger.warning(f"po_got_file: 'po' context missing for user {update.effective_user.id}")
+        context.user_data['po'] = {'categories': []}
+    
     doc = update.message.document or (
         update.message.photo[-1] if update.message.photo else None
     )
     if not doc:
+        logger.debug(f"PO_FILE: No document received from user {update.effective_user.id}")
         await update.message.reply_text(
-            "Please send a file or photo, or tap /cancel."
+            "Please send a file or photo, or type /cancel."
         )
         return PO_FILE
 
-    context.user_data['po']['po_file_id']   = doc.file_id
-    context.user_data['po']['po_file_name'] = getattr(doc, 'file_name', 'po_attachment.jpg')
+    try:
+        file_id   = doc.file_id
+        file_name = getattr(doc, 'file_name', 'po_attachment.jpg')
+        
+        # Validate file attributes
+        if not file_id:
+            logger.error(f"PO_FILE: file_id is empty for user {update.effective_user.id}")
+            await update.message.reply_text("❌ File ID missing. Please try again.")
+            return PO_FILE
+        
+        # Store in context
+        context.user_data['po']['po_file_id']   = file_id
+        context.user_data['po']['po_file_name'] = file_name
+        
+        logger.info(f"PO_FILE: Stored file {file_name} (ID: {file_id[:20]}...) for user {update.effective_user.id}")
+    except Exception as e:
+        logger.error(f"PO_FILE: Exception extracting file info: {e}", exc_info=e)
+        await update.message.reply_text("❌ File processing error. Please try again.")
+        return PO_FILE
 
     await update.message.reply_text(
         f"✅ File attached: *{context.user_data['po']['po_file_name']}*\n\n"
@@ -391,30 +414,52 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ── Auto-route to matching suppliers ──────────────────────────────────────
     try:
         po_cats = json.loads(po.get('categories','[]'))
-    except Exception:
+        logger.info(f"PO_CONFIRM: Parsed categories {po_cats} for PO {po['po_code']}")
+    except Exception as e:
+        logger.error(f"PO_CONFIRM: Failed to parse PO categories: {e}")
         po_cats = []
+    
     suppliers = get_suppliers_matching_categories(po_cats)
-
+    logger.info(f"PO_CONFIRM: Matched {len(suppliers)} suppliers for categories {po_cats} on PO {po['po_code']}")
+    
+    if not suppliers:
+        logger.warning(f"PO_CONFIRM: No suppliers matched categories {po_cats}. PO {po['po_code']} won't be routed.")
+    
     sup_bot  = Bot(token=SUPPLIER_BOT_TOKEN)
     notified = 0
-    for s in suppliers[:8]:
+    for idx, s in enumerate(suppliers[:8], 1):
         try:
+            supplier_id = s.get('supplier_id', 'UNKNOWN')
+            telegram_id = s.get('telegram_id')
+            
+            if not telegram_id:
+                logger.error(f"PO_CONFIRM: Supplier {supplier_id} has no telegram_id")
+                continue
+            
+            logger.debug(f"PO_CONFIRM: Sending to supplier {supplier_id} (tg:{telegram_id}) - {idx}/8")
+            
             await sup_bot.send_message(
-                s['telegram_id'],
+                telegram_id,
                 fmt_po_lead_with_contact(po, buyer),
                 parse_mode="Markdown",
                 reply_markup=lead_kb_import(po['po_id'])
             )
+            
+            # Update supplier leads_received counter
             from models.database import get_connection as _gc
             _conn = _gc()
             _conn.execute(
                 "UPDATE suppliers SET leads_received=leads_received+1 WHERE supplier_id=?",
-                (s['supplier_id'],)
+                (supplier_id,)
             )
             _conn.commit(); _conn.close()
             notified += 1
+            logger.info(f"PO_CONFIRM: Notified supplier {supplier_id} for PO {po['po_code']}")
+            
+        except TelegramError as e:
+            logger.warning(f"PO_CONFIRM: Telegram error notifying supplier {s.get('supplier_id','?')}: {type(e).__name__} - {e}")
         except Exception as e:
-            logger.warning(f"Supplier {s['supplier_id']} notify failed: {e}")
+            logger.error(f"PO_CONFIRM: Unexpected error notifying supplier {s.get('supplier_id','?')}: {e}", exc_info=e)
 
     for aid in ADMIN_IDS:
         try:
@@ -425,10 +470,15 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Detail: {po.get('material_detail','—')}\n"
                 f"File: {po.get('po_file_name') or 'None'}\n"
                 f"Location: {po.get('location','—')}\n"
+                f"Categories: {po_cats}\n"
+                f"Suppliers matched: {len(suppliers)}\n"
                 f"Suppliers notified: {notified}",
                 parse_mode="Markdown"
             )
-        except Exception: pass
+        except TelegramError as e:
+            logger.warning(f"PO_CONFIRM: Failed to notify admin {aid}: {e}")
+        except Exception as e:
+            logger.error(f"PO_CONFIRM: Error notifying admin {aid}: {e}", exc_info=e)
 
     return ConversationHandler.END
 
@@ -453,20 +503,40 @@ async def boq_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return BOQ_UPLOAD
 
 async def boq_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Defensive: ensure 'boq' context exists
+    if 'boq' not in context.user_data:
+        logger.warning(f"boq_got_file: 'boq' context missing for user {update.effective_user.id}")
+        context.user_data['boq'] = {}
+    
     doc = update.message.document or (
         update.message.photo[-1] if update.message.photo else None
     )
     if not doc:
+        logger.debug(f"BOQ_UPLOAD: No document received from user {update.effective_user.id}")
         await update.message.reply_text(
             "Please send a file or photo, or type /cancel."
         )
         return BOQ_UPLOAD
 
-    if 'boq' not in context.user_data:
-        context.user_data['boq'] = {}
-
-    context.user_data['boq']['file_id']   = doc.file_id
-    context.user_data['boq']['file_name'] = getattr(doc, 'file_name', 'boq_photo.jpg')
+    try:
+        file_id   = doc.file_id
+        file_name = getattr(doc, 'file_name', 'boq_photo.jpg')
+        
+        # Validate file attributes
+        if not file_id:
+            logger.error(f"BOQ_UPLOAD: file_id is empty for user {update.effective_user.id}")
+            await update.message.reply_text("❌ File ID missing. Please try again.")
+            return BOQ_UPLOAD
+        
+        # Store in context
+        context.user_data['boq']['file_id']   = file_id
+        context.user_data['boq']['file_name'] = file_name
+        
+        logger.info(f"BOQ_UPLOAD: Stored file {file_name} (ID: {file_id[:20]}...) for user {update.effective_user.id}")
+    except Exception as e:
+        logger.error(f"BOQ_UPLOAD: Exception extracting file info: {e}", exc_info=e)
+        await update.message.reply_text("❌ File processing error. Please try again.")
+        return BOQ_UPLOAD
 
     await update.message.reply_text(
         f"✅ Got it — *{context.user_data['boq']['file_name']}*\n\n"

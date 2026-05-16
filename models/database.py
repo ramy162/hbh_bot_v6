@@ -323,20 +323,35 @@ def get_supplier_categories(telegram_id):
 
 def get_suppliers_matching_categories(categories: list):
     """Return suppliers who supply ANY of the given categories."""
+    logger.info(f"Supplier matching: searching all suppliers for categories {categories}")
+    
     conn = get_connection()
     all_rows = conn.execute("SELECT * FROM suppliers").fetchall()
     conn.close()
     matched = []
+    
+    total_suppliers = len(all_rows)
+    parse_errors = 0
+    
     for row in all_rows:
         row = dict(row)
+        sup_id = row.get('supplier_id', '?')
         try:
             sup_cats = set(json.loads(row.get('categories', '[]')))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Failed to parse categories for supplier {sup_id}: {e}")
             sup_cats = set()
+            parse_errors += 1
+        
         if sup_cats & set(categories):
             matched.append(row)
+            logger.debug(f"Matched supplier {sup_id} ({row.get('business_name','?')}) with categories {sup_cats}")
+    
     # Sort by score desc
     matched.sort(key=lambda x: x.get('score', 0), reverse=True)
+    
+    logger.info(f"Supplier matching complete: {len(matched)}/{total_suppliers} suppliers matched categories {categories}. Parse errors: {parse_errors}")
+    
     return matched
 
 def update_supplier_score(supplier_id):
