@@ -12,7 +12,7 @@ from config import BUYER_TYPES, CITIES, TIMELINES, PROJECT_TYPES
 
 def kb(rows):
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton(label, callback_data=data) for label, data in row]
+        [InlineKeyboardButton(text=label, callback_data=data) for label, data in row]
         for row in rows
     ])
 
