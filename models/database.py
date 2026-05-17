@@ -302,6 +302,10 @@ def get_supplier_by_id(supplier_id):
     return dict(row) if row else None
 
 def upsert_supplier(telegram_id, **kwargs):
+    """Insert or update a supplier. telegram_id is always REQUIRED (NOT NULL)."""
+    if telegram_id is None:
+        raise ValueError("telegram_id cannot be None — suppliers must have a valid Telegram ID")
+    
     if 'categories' in kwargs and isinstance(kwargs['categories'], list):
         kwargs['categories'] = json.dumps(kwargs['categories'])
     supplier = get_supplier(telegram_id)
@@ -326,36 +330,60 @@ def get_supplier_categories(telegram_id):
     except: return []
 
 def get_suppliers_matching_categories(categories: list):
-    """Return suppliers who supply ANY of the given categories."""
-    logger.info(f"Supplier matching: searching all suppliers for categories {categories}")
-    
+    """Return suppliers who supply ANY of the given categories.
+
+    Normalizes category keys (strip + lower) for robust matching and
+    only returns suppliers that have a telegram_id so routing can succeed.
+    """
+    logger.info(f"Supplier matching: incoming categories raw={categories}")
+
+    try:
+        normalized_cats = set([str(c).strip().lower() for c in (categories or []) if c])
+    except Exception:
+        normalized_cats = set()
+
+    if not normalized_cats:
+        logger.info("Supplier matching: no normalized categories provided, returning []")
+        return []
+
     conn = get_connection()
     all_rows = conn.execute("SELECT * FROM suppliers").fetchall()
     conn.close()
+
     matched = []
-    
     total_suppliers = len(all_rows)
     parse_errors = 0
-    
+
     for row in all_rows:
         row = dict(row)
         sup_id = row.get('supplier_id', '?')
         try:
-            sup_cats = set(json.loads(row.get('categories', '[]')))
+            raw = row.get('categories', '[]')
+            sup_cats_raw = json.loads(raw)
+            sup_cats = set([str(c).strip().lower() for c in (sup_cats_raw or []) if c])
         except Exception as e:
             logger.warning(f"Failed to parse categories for supplier {sup_id}: {e}")
             sup_cats = set()
             parse_errors += 1
-        
-        if sup_cats & set(categories):
+
+        # Intersection test on normalized sets
+        if sup_cats & normalized_cats:
+            # Ensure supplier has a telegram id to notify
+            if not row.get('telegram_id'):
+                logger.info(f"Supplier {sup_id} matched categories but has no telegram_id; skipping")
+                continue
             matched.append(row)
-            logger.debug(f"Matched supplier {sup_id} ({row.get('business_name','?')}) with categories {sup_cats}")
-    
+            logger.debug(
+                f"Matched supplier {sup_id} ({row.get('business_name','?')}) with categories {sup_cats}"
+            )
+
     # Sort by score desc
     matched.sort(key=lambda x: x.get('score', 0), reverse=True)
-    
-    logger.info(f"Supplier matching complete: {len(matched)}/{total_suppliers} suppliers matched categories {categories}. Parse errors: {parse_errors}")
-    
+
+    logger.info(
+        f"Supplier matching complete: {len(matched)}/{total_suppliers} suppliers matched normalized_categories={sorted(list(normalized_cats))}. Parse errors: {parse_errors}"
+    )
+
     return matched
 
 def update_supplier_score(supplier_id):

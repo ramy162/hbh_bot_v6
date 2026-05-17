@@ -437,14 +437,32 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"PO_CONFIRM: Failed to parse PO categories: {e}")
         po_cats = []
     
+    logger.info(f"PO_CONFIRM: Buyer {buyer.get('buyer_id')} PO {po['po_code']} categories (raw)={po_cats}")
     suppliers = get_suppliers_matching_categories(po_cats)
-    logger.info(f"PO_CONFIRM: Matched {len(suppliers)} suppliers for categories {po_cats} on PO {po['po_code']}")
-    
+    logger.info(f"PO_CONFIRM: Matched {len(suppliers)} suppliers for PO {po['po_code']}")
+
     if not suppliers:
         logger.warning(f"PO_CONFIRM: No suppliers matched categories {po_cats}. PO {po['po_code']} won't be routed.")
+        # Inform admins immediately about no auto-routing
+        for aid in ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    aid,
+                    f"⚠️ *Auto-routing failed* — `{po['po_code']}`\nNo suppliers matched categories: {po_cats}",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                logger.debug(f"PO_CONFIRM: Failed to notify admin {aid} about routing failure")
     
     sup_bot  = Bot(token=SUPPLIER_BOT_TOKEN)
     notified = 0
+    # Log matched supplier id and telegram_id list
+    try:
+        supplier_summary = [f"{s.get('supplier_id')}@{s.get('telegram_id')}" for s in suppliers]
+    except Exception:
+        supplier_summary = []
+    logger.info(f"PO_CONFIRM: Suppliers matched (id@tg): {supplier_summary}")
+
     for idx, s in enumerate(suppliers[:8], 1):
         try:
             supplier_id = s.get('supplier_id', 'UNKNOWN')
@@ -455,13 +473,20 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 continue
             
             logger.debug(f"PO_CONFIRM: Sending to supplier {supplier_id} (tg:{telegram_id}) - {idx}/8")
-            
-            await sup_bot.send_message(
-                telegram_id,
-                fmt_po_lead_with_contact(po, buyer),
-                parse_mode="Markdown",
-                reply_markup=lead_kb_import(po['po_id'])
-            )
+            try:
+                await sup_bot.send_message(
+                    telegram_id,
+                    fmt_po_lead_with_contact(po, buyer),
+                    parse_mode="Markdown",
+                    reply_markup=lead_kb_import(po['po_id'])
+                )
+                logger.info(f"PO_CONFIRM: send_message succeeded for supplier {supplier_id} (tg:{telegram_id})")
+            except TelegramError as te:
+                logger.warning(f"PO_CONFIRM: TelegramError sending to supplier {supplier_id} (tg:{telegram_id}): {te}")
+                continue
+            except Exception as send_e:
+                logger.error(f"PO_CONFIRM: Unexpected error sending to supplier {supplier_id} (tg:{telegram_id}): {send_e}", exc_info=send_e)
+                continue
             
             # Update supplier leads_received counter
             from models.database import get_connection as _gc

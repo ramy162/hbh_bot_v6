@@ -102,8 +102,10 @@ async def getfile_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid      = update.effective_user.id
     username = update.effective_user.username or ""
+    logger.info(f"SUPPLIER START: user {uid} username={username}")
     supplier = get_supplier(uid)
     if supplier and supplier.get('business_name'):
+        logger.info(f"SUPPLIER START: returning user {uid} - {supplier.get('supplier_id')} already registered")
         upsert_supplier(uid, tg_username=username)
         score = supplier.get('score', 0)
         stars = '⭐' * round(score) if score else ''
@@ -113,6 +115,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=supplier_menu_kb()
         )
         return ConversationHandler.END
+    logger.info(f"SUPPLIER START: new supplier {uid}, initiating registration")
     upsert_supplier(uid, tg_username=username)
     context.user_data['sreg'] = {'categories': []}
     await update.message.reply_text(
@@ -176,6 +179,9 @@ async def got_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await cancel_to_menu(update, context)
     uid  = update.effective_user.id
     sreg = context.user_data.pop('sreg', {})
+    
+    logger.info(f"SUPPLIER CONFIRM: user {uid} registering with categories {sreg.get('categories')} business={sreg.get('business_name')}")
+    
     upsert_supplier(uid,
         business_name=sreg.get('business_name'),
         phone=sreg.get('phone'),
@@ -184,6 +190,9 @@ async def got_license(update: Update, context: ContextTypes.DEFAULT_TYPE):
         score=0.0,
     )
     supplier = get_supplier(uid)
+    
+    logger.info(f"SUPPLIER CONFIRM: supplier {supplier.get('supplier_id')} created successfully with telegram_id={uid}")
+    
     stats    = get_platform_stats()
     from models.database import get_category_map
     cat_labels = ", ".join(
