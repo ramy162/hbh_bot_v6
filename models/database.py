@@ -11,17 +11,21 @@ Changes from v2:
   • All free — no tiers, no limits stored in DB
 """
 
-import sqlite3, os, json, random, string
+import sqlite3, os, json, random, string, logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'hbh.db')
 
 
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=10.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")   # concurrent reads safe
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=10000")  # 10 second busy timeout
     return conn
 
 

@@ -302,6 +302,9 @@ async def start_quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "This purchase order is no longer open.", reply_markup=back_supplier()
         )
         return ConversationHandler.END
+    # Clear previous quote state
+    context.user_data.pop('quote', None)
+    context.user_data.pop('proforma', None)
     context.user_data['quote'] = {'po_id': po_id}
     await q.edit_message_text(
         f"📤 *Respond to {po['po_code']}*\n\n"
@@ -430,6 +433,13 @@ async def got_proforma_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return Q_PROFORMA
 
     try:
+        # Validate upload using utils
+        is_valid, error_msg = validate_upload(update.message)
+        if not is_valid:
+            logger.warning(f"Q_PROFORMA: Validation failed for user {update.effective_user.id}: {error_msg}")
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            return Q_PROFORMA
+        
         file_id   = doc.file_id
         file_name = getattr(doc, 'file_name', 'proforma.jpg')
         

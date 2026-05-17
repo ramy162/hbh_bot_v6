@@ -47,6 +47,10 @@ from utils.files import (
     extract_file_info, validate_upload, is_image
 )
 
+
+def lead_kb_import(po_id):
+    return lead_kb(po_id)
+
 logging.basicConfig(format="%(asctime)s [BUYER] %(levelname)s %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -196,7 +200,14 @@ async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── PO FLOW ────────────────────────────────────────────────────────────────────
 
 async def po_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start PO flow — clear previous state to prevent contamination."""
     q = update.callback_query; await q.answer()
+    # Clean up any lingering state from other flows
+    context.user_data.pop('boq',  None)
+    context.user_data.pop('quote', None)
+    context.user_data.pop('review', None)
+    context.user_data.pop('sreg', None)
+    # Initialize fresh PO state
     context.user_data['po'] = {'categories': []}
     await q.edit_message_text(
         "📋 *New Purchase Order*\n\n"
@@ -276,6 +287,13 @@ async def po_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return PO_FILE
 
     try:
+        # Validate upload using utils
+        is_valid, error_msg = validate_upload(update.message)
+        if not is_valid:
+            logger.warning(f"PO_FILE: Validation failed for user {update.effective_user.id}: {error_msg}")
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            return PO_FILE
+        
         file_id   = doc.file_id
         file_name = getattr(doc, 'file_name', 'po_attachment.jpg')
         
@@ -485,8 +503,14 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── BOQ FLOW ───────────────────────────────────────────────────────────────────
 
 async def boq_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Entry point — triggered by menu:boq button."""
+    """Entry point — triggered by menu:boq button. Clear previous state."""
     q = update.callback_query; await q.answer()
+    # Clean up any lingering state from other flows
+    context.user_data.pop('po',  None)
+    context.user_data.pop('quote', None)
+    context.user_data.pop('review', None)
+    context.user_data.pop('sreg', None)
+    # Initialize fresh BOQ state
     context.user_data['boq'] = {}
     await q.edit_message_text(
         "📊 *BOQ Cost Estimation*\n\n"
@@ -519,6 +543,13 @@ async def boq_got_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return BOQ_UPLOAD
 
     try:
+        # Validate upload using utils
+        is_valid, error_msg = validate_upload(update.message)
+        if not is_valid:
+            logger.warning(f"BOQ_UPLOAD: Validation failed for user {update.effective_user.id}: {error_msg}")
+            await update.message.reply_text(error_msg, parse_mode="Markdown")
+            return BOQ_UPLOAD
+        
         file_id   = doc.file_id
         file_name = getattr(doc, 'file_name', 'boq_photo.jpg')
         
@@ -718,9 +749,6 @@ def fmt_po_lead_with_contact(po, buyer):
         f"{'─'*28}\n"
         f"_via Habesha Build Hub_ 🏗️"
     )
-
-def lead_kb_import(po_id):
-    return lead_kb(po_id)
 
 # ── FALLBACK ───────────────────────────────────────────────────────────────────
 
