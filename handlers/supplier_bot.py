@@ -607,7 +607,7 @@ def build_supplier_app():
     onboarding = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CommandHandler("start", start)],
         states={
             S_CATS:    [CallbackQueryHandler(cat_toggle, pattern=r"^scat:")],
@@ -623,7 +623,7 @@ def build_supplier_app():
     quote_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CallbackQueryHandler(start_quote, pattern=r"^quoterpo:")],
         states={
             Q_TYPE: [
