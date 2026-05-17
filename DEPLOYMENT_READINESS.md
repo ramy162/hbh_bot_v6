@@ -228,7 +228,7 @@ All files compiled successfully without syntax errors:
 ```
 ✓ per_chat=True for multi-user safety
 ✓ per_user=True for isolation
-✓ per_message=False for state persistence
+✓ per_message=True for state persistence
 ✓ allow_reentry=True where needed
 ✓ Fallback handlers registered
 ```

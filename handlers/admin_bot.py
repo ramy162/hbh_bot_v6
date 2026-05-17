@@ -234,15 +234,51 @@ async def route_po_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ); return
 
     notified = 0
-    for s in suppliers[:6]:          # cap at 6 per PO
+    file_delivery_success = 0
+    sup_bot = Bot(token=SUPPLIER_BOT_TOKEN)
+    
+    for idx, s in enumerate(suppliers[:6], 1):          # cap at 6 per PO
         try:
-            sup_bot = Bot(token=SUPPLIER_BOT_TOKEN)
-            await sup_bot.send_message(
-                s['telegram_id'],
-                fmt_po_lead(po, buyer or {}),
-                parse_mode="Markdown",
-                reply_markup=lead_kb(po_id)
-            )
+            logger.debug(f"ADMIN ROUTE: Sending PO {po['po_code']} to supplier {s['supplier_id']} (tg:{s['telegram_id']}) - {idx}/6")
+            
+            # Send text message with PO details
+            try:
+                await sup_bot.send_message(
+                    s['telegram_id'],
+                    fmt_po_lead(po, buyer or {}),
+                    parse_mode="Markdown",
+                    reply_markup=lead_kb(po_id)
+                )
+                logger.info(f"ADMIN ROUTE: Text sent to supplier {s['supplier_id']}")
+            except Exception as e:
+                logger.warning(f"ADMIN ROUTE: Failed to send text to supplier {s['supplier_id']}: {e}")
+                continue
+            
+            # Send PO file if it exists
+            if po.get('po_file_id'):
+                try:
+                    logger.debug(f"ADMIN ROUTE: Sending PO file to supplier {s['supplier_id']}")
+                    file_caption = (
+                        f"📎 *Attachment for {po['po_code']}*\n\n"
+                        f"_Buyer: {buyer.get('name','—') if buyer else '—'}_\n"
+                        f"_via Habesha Build Hub_ 🏗️"
+                    )
+                    file_sent = await send_file_preview(
+                        bot=sup_bot,
+                        chat_id=s['telegram_id'],
+                        file_id=po['po_file_id'],
+                        filename=po.get('po_file_name', 'po_attachment'),
+                        caption=file_caption,
+                        parse_mode="Markdown"
+                    )
+                    if file_sent:
+                        logger.info(f"ADMIN ROUTE: File delivered to supplier {s['supplier_id']}")
+                        file_delivery_success += 1
+                    else:
+                        logger.warning(f"ADMIN ROUTE: File delivery failed for supplier {s['supplier_id']}")
+                except Exception as e:
+                    logger.warning(f"ADMIN ROUTE: Error sending file to supplier {s['supplier_id']}: {e}")
+            
             # Increment leads_received
             conn = get_connection()
             conn.execute(
@@ -251,14 +287,16 @@ async def route_po_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             conn.commit(); conn.close()
             notified += 1
+            logger.info(f"ADMIN ROUTE: Successfully routed PO {po['po_code']} to supplier {s['supplier_id']}")
         except Exception as e:
-            logger.warning(f"Could not notify supplier {s['supplier_id']}: {e}")
+            logger.error(f"ADMIN ROUTE: Unexpected error routing to supplier {s['supplier_id']}: {e}", exc_info=e)
 
     log_event('po_routed', 'admin', update.effective_user.id, po_id,
-              {'suppliers_notified': notified})
+              {'suppliers_notified': notified, 'files_delivered': file_delivery_success})
     await q.edit_message_text(
         f"✅ *PO Routed!*\n\n"
-        f"`{po['po_code']}` sent to *{notified}* supplier(s).",
+        f"`{po['po_code']}` sent to *{notified}* supplier(s)\n"
+        f"Files delivered: *{file_delivery_success}*",
         parse_mode="Markdown", reply_markup=admin_menu_kb()
     )
 
@@ -872,7 +910,7 @@ def build_admin_app():
     price_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[
             CallbackQueryHandler(price_action_callback, pattern=r"^adm_price:(edit|add|upload):?"),
         ],
@@ -892,7 +930,7 @@ def build_admin_app():
     cat_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CallbackQueryHandler(cat_callback, pattern=r"^adm_cat:add")],
         states={ADM_CAT_ADD: [MessageHandler(filters.TEXT & ~filters.COMMAND, cat_add_text)]},
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
@@ -902,7 +940,7 @@ def build_admin_app():
     bc_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CallbackQueryHandler(bc_target_callback, pattern=r"^adm_bc:")],
         states={ADM_BROADCAST_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, bc_send)]},
         fallbacks=[CommandHandler("cancel", lambda u, c: ConversationHandler.END)],
@@ -911,7 +949,7 @@ def build_admin_app():
     boq_deliver_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CommandHandler("deliverboq", boq_deliver_start)],
         states={
             ADM_BOQ_DELIVER_FILE: [

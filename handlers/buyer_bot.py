@@ -456,6 +456,7 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     sup_bot  = Bot(token=SUPPLIER_BOT_TOKEN)
     notified = 0
+    file_delivery_success = 0
     # Log matched supplier id and telegram_id list
     try:
         supplier_summary = [f"{s.get('supplier_id')}@{s.get('telegram_id')}" for s in suppliers]
@@ -472,7 +473,9 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 logger.error(f"PO_CONFIRM: Supplier {supplier_id} has no telegram_id")
                 continue
             
-            logger.debug(f"PO_CONFIRM: Sending to supplier {supplier_id} (tg:{telegram_id}) - {idx}/8")
+            logger.debug(f"PO_CONFIRM: Sending PO lead to supplier {supplier_id} (tg:{telegram_id}) - {idx}/8")
+            
+            # ── Send text message with PO details and contact info ──────────────
             try:
                 await sup_bot.send_message(
                     telegram_id,
@@ -480,13 +483,42 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode="Markdown",
                     reply_markup=lead_kb_import(po['po_id'])
                 )
-                logger.info(f"PO_CONFIRM: send_message succeeded for supplier {supplier_id} (tg:{telegram_id})")
+                logger.info(f"PO_CONFIRM: Text message sent to supplier {supplier_id} (tg:{telegram_id})")
             except TelegramError as te:
-                logger.warning(f"PO_CONFIRM: TelegramError sending to supplier {supplier_id} (tg:{telegram_id}): {te}")
+                logger.warning(f"PO_CONFIRM: TelegramError sending text to supplier {supplier_id} (tg:{telegram_id}): {te}")
                 continue
             except Exception as send_e:
-                logger.error(f"PO_CONFIRM: Unexpected error sending to supplier {supplier_id} (tg:{telegram_id}): {send_e}", exc_info=send_e)
+                logger.error(f"PO_CONFIRM: Unexpected error sending text to supplier {supplier_id} (tg:{telegram_id}): {send_e}", exc_info=send_e)
                 continue
+            
+            # ── Send PO file if it exists as TRUE Telegram-native attachment ────
+            if po.get('po_file_id'):
+                try:
+                    logger.debug(f"PO_CONFIRM: Sending PO file to supplier {supplier_id} (tg:{telegram_id})")
+                    file_caption = (
+                        f"📎 *Attachment for {po['po_code']}*\n\n"
+                        f"_Buyer: {buyer.get('name','—')}_\n"
+                        f"_via Habesha Build Hub_ 🏗️"
+                    )
+                    file_sent = await send_file_preview(
+                        bot=sup_bot,
+                        chat_id=telegram_id,
+                        file_id=po['po_file_id'],
+                        filename=po.get('po_file_name', 'po_attachment'),
+                        caption=file_caption,
+                        parse_mode="Markdown"
+                    )
+                    if file_sent:
+                        logger.info(f"PO_CONFIRM: File delivered successfully to supplier {supplier_id} (tg:{telegram_id})")
+                        file_delivery_success += 1
+                    else:
+                        logger.warning(f"PO_CONFIRM: File delivery failed for supplier {supplier_id} (tg:{telegram_id}) — file may have expired")
+                except TelegramError as fe:
+                    logger.warning(f"PO_CONFIRM: TelegramError sending file to supplier {supplier_id} (tg:{telegram_id}): {fe}")
+                except Exception as file_e:
+                    logger.error(f"PO_CONFIRM: Unexpected error sending file to supplier {supplier_id} (tg:{telegram_id}): {file_e}", exc_info=file_e)
+            else:
+                logger.debug(f"PO_CONFIRM: No file attached to PO {po['po_code']}, skipping file delivery")
             
             # Update supplier leads_received counter
             from models.database import get_connection as _gc
@@ -497,25 +529,26 @@ async def po_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             _conn.commit(); _conn.close()
             notified += 1
-            logger.info(f"PO_CONFIRM: Notified supplier {supplier_id} for PO {po['po_code']}")
+            logger.info(f"PO_CONFIRM: Successfully routed PO {po['po_code']} to supplier {supplier_id} (file: {'YES' if po.get('po_file_id') else 'NO'})")
             
         except TelegramError as e:
-            logger.warning(f"PO_CONFIRM: Telegram error notifying supplier {s.get('supplier_id','?')}: {type(e).__name__} - {e}")
+            logger.warning(f"PO_CONFIRM: Telegram error routing to supplier {s.get('supplier_id','?')}: {type(e).__name__} - {e}")
         except Exception as e:
-            logger.error(f"PO_CONFIRM: Unexpected error notifying supplier {s.get('supplier_id','?')}: {e}", exc_info=e)
+            logger.error(f"PO_CONFIRM: Unexpected error routing to supplier {s.get('supplier_id','?')}: {e}", exc_info=e)
 
     for aid in ADMIN_IDS:
         try:
             await context.bot.send_message(
                 aid,
-                f"📋 *New PO* — `{po['po_code']}`\n"
+                f"📋 *New PO Routed* — `{po['po_code']}`\n"
                 f"Buyer: {buyer.get('name','—')}\n"
                 f"Detail: {po.get('material_detail','—')}\n"
                 f"File: {po.get('po_file_name') or 'None'}\n"
                 f"Location: {po.get('location','—')}\n"
                 f"Categories: {po_cats}\n"
                 f"Suppliers matched: {len(suppliers)}\n"
-                f"Suppliers notified: {notified}",
+                f"Suppliers notified: {notified}\n"
+                f"Files delivered: {file_delivery_success}",
                 parse_mode="Markdown"
             )
         except TelegramError as e:
@@ -860,7 +893,7 @@ def build_buyer_app():
     onboarding = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CommandHandler("start", start)],
         states={
             B_TYPE:  [CallbackQueryHandler(got_type,     pattern=r"^(btype:|menu:main)")],
@@ -875,7 +908,7 @@ def build_buyer_app():
     po_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CallbackQueryHandler(po_start, pattern=r"^menu:po$")],
         states={
             PO_CATS: [
@@ -918,7 +951,7 @@ def build_buyer_app():
     boq_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CallbackQueryHandler(boq_start, pattern=r"^menu:boq$")],
         states={
             BOQ_UPLOAD: [
@@ -942,7 +975,7 @@ def build_buyer_app():
     review_conv = ConversationHandler(
         per_chat=True,
         per_user=True,
-        per_message=False,
+        per_message=True,
         entry_points=[CallbackQueryHandler(review_score_cb, pattern=r"^rev:")],
         states={REV_COMMENT: [MessageHandler(filters.TEXT & ~filters.COMMAND, review_comment)]},
         fallbacks=[CommandHandler("cancel", cancel_to_menu)],
